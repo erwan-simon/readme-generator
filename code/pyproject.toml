@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "readme_generator"
+version = "0.3.0"
+description = ""
+authors = ["Erwan Simon <erwan.simon@devoteam.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.13"
+boto3 = "^1.20.26"
+click = "^8.1.3"
+strands-agents = "^1.9.0"
+strands-agents-tools = "^0.2.18"
+strands-agents-builder = "^0.1.10"
+
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+readme_generator = "readme_generator.main:command_line_main"

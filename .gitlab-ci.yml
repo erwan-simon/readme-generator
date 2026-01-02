@@ -1,0 +1,26 @@
+variables:
+  PROJECT_NAME: poc
+  DOMAIN_NAME: readme_generator
+  STAGE_NAME: $CI_COMMIT_REF_SLUG
+  PYTHON_CODE_PATH: "./code/"
+  PYENV_VERSION: 3.13
+
+
+include:
+  - project: 'erwan.simon/devops-platform-ci-templates'
+    ref: 'v2.0.1'
+    file:
+      - 'base.yml'
+      - 'terraform.yml'
+      - 'python.yml'
+      - 'release.yml'
+      - 'mirror_to_github.yml'
+
+
+stages:
+  - init
+  - format
+  - security
+  - deploy
+  - release
+  - mirror_to_github
