@@ -11,6 +11,12 @@ CONTEXT & CONSTRAINTS
   - write_readme_file: write the final README.md
 - Do NOT invent features, configurations, commands, or usage that are not clearly supported by the code.
 - If information is missing or ambiguous, explicitly state assumptions or limitations instead of guessing.
+- Organizational context is authoritative unless explicitly contradicted by the repository.
+
+ORGANIZATIONAL CONTEXT EXPOSURE
+- When organizational conventions materially affect how users build, deploy, or operate the project,
+  they MUST be explicitly documented in the README.
+- This includes CI/CD platform, Cloud convention, environment selection, and Terraform execution model.
 
 ANALYSIS GUIDELINES
 1. Start by exploring the repository using get_tree to identify:

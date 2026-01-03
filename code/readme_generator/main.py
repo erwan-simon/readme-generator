@@ -11,7 +11,7 @@ from strands import Agent, tool
 from strands.types.tools import ToolContext
 from strands.session.file_session_manager import FileSessionManager
 from strands.handlers.callback_handler import PrintingCallbackHandler
-from strands_tools import file_read, file_write, use_llm
+from strands_tools import file_read
 
 
 def check_root_path(root_path: str, operation_path: str):
@@ -22,57 +22,6 @@ def check_root_path(root_path: str, operation_path: str):
                         f"Path {operation_path} is outside given root path {root_path}"
         logging.getLogger().error(error_message)
         raise ValueError(error_message)
-
-@tool(context=True)
-def summarize_file(agent, file_path: str, additional_context: str) -> str:
-    """
-    Reads the content of a file and returns a summary made by an LLM call.
-
-    Args:
-        file_path (str): Path to the file to read.
-        additional_context (str): Additional context to send to the LLM when summarizing the file content (usefull if you want to guide the LLM to what you are looking for or if the file needs some context to be understood).
-
-    Returns:
-        dict: Summary of the read file with following keys ("file", "category", "language_or_format", "purpose", "public_interfaces", "external_dependencies", "execution_or_config_notes", "limitations")
-    """
-    check_root_path(agent.state.get("root_path"), file_path)
-    path = Path(file_path)
-    if not path.is_file():
-        error_message = f"The file '{file_path}' does not exist or is not a file."
-        logging.getLogger().error(error_message)
-        raise FileNotFoundError(error_message)
-    print(f"Reading file {file_path}")
-    file_content = path.read_text(encoding="utf-8")
-    max_chars = 200_000
-    truncated = False
-    if len(file_content) >= max_chars:
-        logging.getLogger().error(f"File {file_path} is bigger than max chars, which is {max_chars}, truncating...")
-        file_content = file_content[:max_chars]
-        truncated = True
-    user_message = f"""
-File path: {file_path}
-
-File content:
-{file_content}
-
-Additional Context:
-{additional_context}
-
-{"NOTE: File content was truncated." if truncated else ""}
-"""
-    current_program_path = Path(__file__).resolve().parent
-    system_prompt_file_path = current_program_path / "subagent_system_prompt.txt"
-    summarizing_agent = Agent(
-        model=agent.state.get("inference_profile_arn"),
-        system_prompt=system_prompt_file_path.read_text(encoding="utf-8"))
-    result = summarizing_agent(user_message)
-    try:
-        print(result.message["content"][0]["text"])
-        return json.loads(result.message["content"][0]["text"])
-    except json.JSONDecodeError as e:
-        error_message = f"Invalid JSON returned for file {file_path}"
-        logging.getLogger().error(error_message)
-        raise RuntimeError(error_message) from e
 
 
 @tool(context=True)
@@ -135,7 +84,15 @@ def get_inference_profile_arn(logger, boto_session, inference_profile_name: str)
     return inference_profile_arn
 
 
-def main(logger, boto_session, project_name: str, domain_name: str, print_sub_agent_debug: bool, root_path: str, chat_mode: bool):
+def main(logger,
+         boto_session,
+         project_name: str,
+         domain_name: str,
+         print_sub_agent_debug: bool,
+         root_path: str,
+         chat_mode: bool,
+         additional_context_file_path: str,
+         additional_context_string: str):
     inference_profile_prefix = f"{project_name}_{domain_name}"
     inference_profile_arn = get_inference_profile_arn(
         logger, boto_session, inference_profile_prefix)
@@ -145,9 +102,18 @@ def main(logger, boto_session, project_name: str, domain_name: str, print_sub_ag
     current_program_path = Path(__file__).resolve().parent
     system_prompt_file_path = current_program_path / "system_prompt.txt"
     readme_example_file_path = current_program_path / "readme_example.md"
+    system_prompt = "SYSTEM PROMPT\n" + system_prompt_file_path.read_text(encoding="utf-8") + \
+        "\nUse this md file as template: \n" + \
+        readme_example_file_path.read_text(encoding="utf-8")
+    if additional_context_file_path:
+        system_prompt += "\nORGANIZATIONAL CONTEXT:" + \
+            Path(additional_context_file_path).resolve().read_text(encoding="utf-8")
+    if additional_context_string:
+        system_prompt += "\nFinally, the user gave you this sentence as additional context:" + \
+            additional_context_string
     agent = Agent(
         model=inference_profile_arn,
-        system_prompt=system_prompt_file_path.read_text(encoding="utf-8") + "\n Use this md file as template: \n" + readme_example_file_path.read_text(encoding="utf-8"),
+        system_prompt=system_prompt,
         session_manager=main_session_manager,
         callback_handler=None,
         tools=[get_tree, write_readme_file, file_read])
@@ -187,8 +153,19 @@ def main(logger, boto_session, project_name: str, domain_name: str, print_sub_ag
     "-r", "--root-path", required=False,
     help="Path of the root of the project to document")
 @click.option("-c", '--chat-mode', required=False, default=False, is_flag=True, help="Mode allowing to discuss with the program to perfect the produced readme file")
+@click.option(
+    "--additional-context-file-path", required=False,
+    help="Path of a file providing additional context to give to the model")
+@click.option(
+    "--additional-context-string", required=False,
+    help="String providing additional context to give to the model")
 def command_line_main(
-        ctx, project_name: str, root_path: str = None, chat_mode: bool = False) -> int:
+        ctx,
+        project_name: str,
+        root_path: str = None,
+        chat_mode: bool = False,
+        additional_context_file_path: str = None,
+        additional_context_string: str = None) -> int:
     domain_name = "readme_generator"
     if root_path:
         # change relative path to absolute path
@@ -204,7 +181,16 @@ def command_line_main(
     logging.basicConfig(
         format="%(message)s",
     )
-    main(ctx.obj.logger, ctx.obj.boto_session, project_name, domain_name, True, root_path, chat_mode)
+    main(
+        ctx.obj.logger,
+        ctx.obj.boto_session,
+        project_name,
+        domain_name,
+        True,
+        root_path,
+        chat_mode,
+        additional_context_file_path,
+        additional_context_string)
 
 if __name__ == "__main__":
     sys.exit(command_line_main())

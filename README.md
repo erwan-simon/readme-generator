@@ -7,6 +7,7 @@
 * [V. Usage](#v-usage)
 * [VI. Infrastructure](#vi-infrastructure)
 * [VII. Configuration](#vii-configuration)
+  * [A. Prompt Engineering and Context Management](#a-prompt-engineering-and-context-management)
 * [VIII. Project Structure](#viii-project-structure)
   * [A. Application Code](#a-application-code)
   * [B. Infrastructure as Code](#b-infrastructure-as-code)
@@ -14,288 +15,492 @@
 
 ## I. Project Overview
 
-README Generator is an AI-powered tool that automatically generates comprehensive README.md documentation for software projects. It uses AWS Bedrock's Claude Sonnet model to analyze a codebase and produce well-structured, professional documentation.
+README Generator is an AI-powered CLI tool that automatically generates comprehensive README.md files for codebases. The tool analyzes a project's repository structure and source code to produce well-structured, accurate documentation without requiring prior knowledge of the project.
 
-The tool is designed for developers who need to quickly create or update README files by leveraging AI to understand project structure, dependencies, and functionality through automated code analysis.
+The tool is designed for developers and technical teams who want to:
+- Automatically generate standardized README files for their projects
+- Ensure documentation accuracy by deriving information directly from code
+- Maintain consistent documentation structure across multiple repositories
+- Reduce manual documentation effort
 
 ## II. Architecture / Design
 
-The project consists of two main components:
+The README Generator is built as a Python-based AI agent system with the following components:
 
-1. **Python CLI Application**: An agent-based system built with the Strands framework that:
-   - Explores repository structure using directory traversal tools
-   - Reads relevant source files to understand project purpose and functionality
-   - Uses AWS Bedrock inference profiles to generate documentation via Claude Sonnet 4.5
-   - Writes the generated README.md to the project root
-   - Supports interactive chat mode for iterative refinement
+### Core Components
 
-2. **Terraform Infrastructure**: Provisions AWS resources required for the application:
-   - Creates a Bedrock inference profile pointing to Claude Sonnet 4.5 model
-   - Manages AWS tagging and state through S3 backend
-   - Enables cost tracking through cost allocation tags
+1. **AI Agent (Strands Framework)**
+   - Uses AWS Bedrock with Claude Sonnet 4.5 as the inference model
+   - Equipped with custom tools for repository exploration and file manipulation
+   - Maintains conversation state for interactive chat mode
 
-**Key Interactions**:
-- The CLI application authenticates with AWS using boto3
-- Retrieves the inference profile ARN from Bedrock service
-- Sends analysis prompts to the Claude model via the inference profile
-- The AI agent uses custom tools (file reading, directory traversal) with path validation to analyze the target repository
-- Generates structured README content based on a predefined template and system prompt
+2. **Custom Tools**
+   - `get_tree`: Recursively explores directory structure with configurable depth
+   - `write_readme_file`: Writes generated content to README.md at the project root
+   - `file_read`: Reads and analyzes source files (provided by strands-agents-tools)
+
+3. **Security Layer**
+   - Path validation ensures the agent can only access files within the specified root directory
+   - Prevents directory traversal attacks
+
+4. **Session Management**
+   - File-based session persistence for conversation history
+   - Enables interactive chat mode for iterative refinement
+
+### Workflow
+
+1. User invokes CLI with project path and project name
+2. Agent retrieves AWS Bedrock inference profile by name pattern (`{project_name}_{domain_name}`)
+3. System prompt is constructed from templates and optional organizational context
+4. Agent explores repository structure using `get_tree`
+5. Agent reads relevant files to understand the project
+6. Agent generates README.md based on analysis
+7. (Optional) User can enter chat mode to iteratively refine the documentation
 
 ## III. Prerequisites
 
+### Required
 - **Python**: 3.13 or higher
-- **Poetry**: For Python dependency management
-- **AWS Account**: With appropriate permissions for:
-  - AWS Bedrock service access
-  - IAM role assumption (if using cross-account deployment)
-  - S3 bucket access (for Terraform state)
-  - DynamoDB table access (for Terraform state locking)
-- **Terraform**: For infrastructure deployment (backend configured for `eu-west-1`)
-- **AWS CLI**: Configured with valid credentials
+- **AWS Account**: With access to AWS Bedrock
+- **AWS Credentials**: Properly configured on the local machine (via `~/.aws/credentials` or environment variables)
+- **Poetry**: For dependency management
+- **Terraform**: 1.0+ (for infrastructure deployment)
+
+### AWS Permissions
+The executing user/role must have permissions to:
+- Call AWS Bedrock inference profiles (`bedrock:InvokeModel`)
+- List AWS Bedrock inference profiles (`bedrock:ListInferenceProfiles`)
+
+### Infrastructure Prerequisite
+Before using the tool, an AWS Bedrock inference profile must be deployed via Terraform (see Infrastructure section).
 
 ## IV. Installation / Setup
 
-### Application Setup
+### 1. Clone the Repository
 
-1. Navigate to the code directory:
 ```bash
-cd code
+git clone <repository-url>
+cd readme-generator
 ```
 
-2. Install dependencies using Poetry:
+### 2. Install Dependencies
+
+Navigate to the code directory and install Python dependencies using Poetry:
+
 ```bash
+cd code
 poetry install
 ```
 
-3. The installation creates a CLI command `readme_generator` that can be invoked after activation.
+### 3. Configure AWS Credentials
 
-### Infrastructure Setup
+Ensure AWS credentials are configured:
 
-1. Navigate to the infrastructure directory:
 ```bash
-cd iac
+aws configure
 ```
 
-2. Set required variables in `terraform.tfvars`:
-```hcl
-project_name       = "your_project_name"
-git_repository     = "your_git_repo_url"
-role_to_assume_arn = "arn:aws:iam::ACCOUNT:role/ROLE_NAME"  # Optional
-```
+Or set environment variables:
 
-3. Initialize Terraform:
 ```bash
-terraform init
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+export AWS_DEFAULT_REGION="eu-west-1"
 ```
 
-4. Deploy the infrastructure:
+### 4. Deploy Infrastructure
+
+Deploy the AWS Bedrock inference profile:
+
 ```bash
-terraform apply
+cd ../iac
+terraform init -backend-config="bucket=<your-s3-bucket>" \
+               -backend-config="dynamodb_table=<your-dynamodb-table>"
+terraform apply -var="project_name=<your-project-name>" \
+                -var="git_repository=<repository-url>"
 ```
 
-This creates a Bedrock inference profile named `{project_name}_readme_generator`.
-
-**Note**: If `role_to_assume_arn` is not provided (or set to empty string), Terraform will use the default AWS credentials configured in your environment.
+The inference profile name will be: `{project_name}_readme_generator`
 
 ## V. Usage
 
 ### Basic Usage
 
-Generate a README for the current directory:
+Generate a README.md for the current directory:
 
 ```bash
-poetry run readme_generator -p <project_name>
+poetry run readme_generator -p <project-name>
 ```
 
-Generate a README for a specific project path:
+Generate a README.md for a specific path:
 
 ```bash
-poetry run readme_generator -p <project_name> -r /path/to/project
+poetry run readme_generator -p <project-name> -r /path/to/project
 ```
 
 ### Interactive Chat Mode
 
-Use chat mode to refine the generated README iteratively:
+Enable chat mode to iteratively refine the generated README:
 
 ```bash
-poetry run readme_generator -p <project_name> -c
+poetry run readme_generator -p <project-name> -r /path/to/project --chat-mode
 ```
 
 In chat mode:
-- The tool generates an initial README
-- You can provide feedback to improve or modify sections
-- Type `exit` when satisfied with the result
+- The tool generates an initial README.md
+- You can provide feedback and request modifications
+- Type `exit` to finish
 
-### Command-Line Options
+### Providing Custom Context
 
-- `-p, --project-name` (required): Project name used to identify the Bedrock inference profile
-- `-r, --root-path` (optional): Root path of the project to document (defaults to current working directory)
-- `-c, --chat-mode` (optional): Enable interactive mode for README refinement
+The README Generator supports two methods for providing additional context to guide the documentation generation process.
 
-### Example
+#### Via Context File (Recommended for Organizations)
+
+Use `--additional-context-file-path` to provide a file containing organizational or project-specific context:
 
 ```bash
-# Generate README for a project in the current directory
-poetry run readme_generator -p my_app
-
-# Generate README for a specific path with chat mode
-poetry run readme_generator -p my_app -r ~/projects/my_app -c
+poetry run readme_generator -p <project-name> -r /path/to/project \
+    --additional-context-file-path /path/to/organizational-context.md
 ```
+
+**Use cases for context files:**
+- **Organizational Standards**: Define company-wide conventions, naming patterns, infrastructure practices, or deployment workflows
+- **Technology Stack Context**: Specify internal frameworks, libraries, or tools used across multiple projects
+- **Documentation Standards**: Enforce specific documentation styles, required sections, or terminology
+- **Cloud & Infrastructure Conventions**: Document AWS account structures, resource naming conventions, tagging policies, or FinOps practices
+- **Security & Compliance**: Include security guidelines, compliance requirements, or access control patterns
+
+**Example context file** (`organizational-context.md`):
+```markdown
+# Company XYZ Technical Context
+
+## Infrastructure Conventions
+- All projects use AWS in eu-west-1 region
+- Resource naming: {project}_{domain}_{stage}_{resource}
+- All resources must have cost allocation tags
+
+## Deployment
+- GitLab CI/CD is the standard platform
+- Terraform manages all infrastructure
+- Backend state stored in S3 with DynamoDB locking
+
+## Technology Stack
+- Python projects use Poetry for dependency management
+- All APIs follow OpenAPI 3.0 specification
+- Monitoring uses CloudWatch and DataDog
+```
+
+This context will be injected into the AI agent's system prompt, ensuring generated documentation reflects organizational practices and conventions.
+
+#### Via Context String (Quick Additions)
+
+For simple, one-off context additions, use `-c` or `--additional-context-string`:
+
+```bash
+poetry run readme_generator -p <project-name> -r /path/to/project \
+    -c "This is a legacy project migrated from Python 2.7 to Python 3.13"
+```
+
+### CLI Options
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `-p, --project-name` | Yes | AWS project name (used to locate Bedrock inference profile) |
+| `-r, --root-path` | No | Root path of the project to document (defaults to current directory) |
+| `--chat-mode` | No | Enable interactive chat mode for README refinement |
+| `--additional-context-file-path` | No | Path to file containing additional context for the AI (e.g., organizational conventions) |
+| `-c, --additional-context-string` | No | Additional context provided as a string (for quick additions) |
 
 ## VI. Infrastructure
 
+### Overview
+
+The infrastructure is managed with Terraform and deploys an AWS Bedrock inference profile.
+
 ### Terraform Resources
 
-The infrastructure is managed through Terraform and provisions:
+**File**: `iac/bedrock_inference_profile.tf`
 
-**`bedrock_inference_profile.tf`**:
-- `aws_bedrock_inference_profile.main`: Creates an application-level inference profile
+- **aws_bedrock_inference_profile.main**: Creates a Bedrock inference profile
+  - Name pattern: `{project_name}_readme_generator`
   - Model: Claude Sonnet 4.5 (`eu.anthropic.claude-sonnet-4-5-20250929-v1:0`)
-  - Name: `{project_name}_{domain_name}`
-  - Region-specific ARN construction
-  - **Cost Allocation**: The inference profile enables cost allocation tags to track LLM call costs. The `domain_name` value is used as a tag, allowing you to monitor and attribute Bedrock API costs per domain in AWS Cost Explorer.
+  - Region-specific model ARN is constructed dynamically
 
-**Backend Configuration**:
-- S3 bucket: `poc-terraform-backend-049810646332`
-- DynamoDB table: `poc_terraform_backend`
-- State file: `readme_generator.tfstate`
-- Region: `eu-west-1`
-- Encryption enabled
+### Terraform Variables
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `project_name` | Name of the project (used for resource naming) | Yes |
+| `git_repository` | Git repository URL (used for tagging) | Yes |
+| `role_to_assume_arn` | ARN of IAM role to assume for deployment | No |
 
 ### Deployment Workflow
 
-1. Ensure AWS credentials are configured
-2. Update `terraform.tfvars` with project-specific values
-3. Run `terraform init` to initialize providers and backend
-4. Run `terraform plan` to preview changes
-5. Run `terraform apply` to create resources
-6. The inference profile ARN will be discoverable via the Bedrock API
+#### GitLab CI/CD (Organizational Standard)
 
-### Authentication Options
+The project uses GitLab CI/CD for automated deployment:
 
-The Terraform provider supports two authentication modes:
+- **CI/CD Configuration**: `.gitlab-ci.yml`
+- **Shared Templates**: Includes reusable templates from `erwan.simon/devops-platform-ci-templates` (v2.0.2)
+- **Pipeline Stages**: init, format, security, deploy, release, mirror_to_github
+- **Environment Selection**: Derived from Git branch name (`$CI_COMMIT_REF_SLUG`)
+- **Project Variables**:
+  - `PROJECT_NAME`: poc
+  - `DOMAIN_NAME`: readme_generator
+  - `STAGE_NAME`: Automatically set from branch name
 
-- **Role Assumption**: If `role_to_assume_arn` is provided, Terraform will assume the specified IAM role for deployment
-- **Default Credentials**: If `role_to_assume_arn` is not provided or set to empty string, Terraform uses the default AWS credentials from your environment
+#### Local Deployment
 
-### Cost Tracking
+For local Terraform execution:
 
-The Bedrock inference profile is tagged with the following cost allocation tags (defined in `terraform.tf`):
-- `Appli`: The project name
-- `Component`: The domain name (used for cost attribution)
+1. Initialize Terraform with backend configuration:
+   ```bash
+   terraform init -backend-config="bucket=<s3-bucket>" \
+                  -backend-config="dynamodb_table=<dynamodb-table>"
+   ```
 
-These tags allow you to track and analyze LLM API costs in AWS Cost Explorer by filtering on the `Component` tag value (domain_name). This enables granular cost visibility per domain or application component.
+2. Create or select Terraform workspace (controls environment):
+   ```bash
+   # Create new environment workspace
+   terraform workspace new prod
+   
+   # Or select existing workspace
+   terraform workspace select prod
+   ```
+   
+   **Note**: If no workspace is created, Terraform uses the `default` workspace, resulting in `stage_name=default`.
 
-### Assumptions
+3. Apply Terraform configuration:
+   ```bash
+   terraform apply -var="project_name=poc" \
+                   -var="git_repository=https://gitlab.com/your/repo"
+   ```
 
-- The AWS account has access to Claude Sonnet 4.5 model in the specified region
-- The S3 backend bucket and DynamoDB table already exist
-- IAM permissions allow creating Bedrock inference profiles
-- Cost allocation tags are enabled in AWS Billing and Cost Management
+4. Verify AWS credentials target the correct account:
+   ```bash
+   aws sts get-caller-identity
+   ```
+
+### Backend Configuration
+
+- **Backend Type**: S3
+- **State File Key**: `readme_generator.tfstate`
+- **Region**: `eu-west-1`
+- **Encryption**: Enabled
+
+Backend configuration is provided at runtime (not hardcoded in Terraform files), following organizational conventions.
+
+### Tagging
+
+All AWS resources are tagged with:
+- `Appli`: Project name
+- `Component`: `readme_generator`
+- `git_repository`: Source repository URL
+
+These tags support cost allocation and FinOps tracking.
 
 ## VII. Configuration
 
-### Application Configuration
+### Environment Variables
 
-Configuration is provided via command-line arguments:
+The tool does not require environment variables for basic operation, but relies on standard AWS SDK credential resolution:
 
-- `project_name`: Used to construct the inference profile name as `{project_name}_readme_generator`
-- `root_path`: Directory path the agent is allowed to access (enforced by path validation)
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_DEFAULT_REGION` (defaults to `eu-west-1` in Terraform)
 
-### Terraform Configuration
+### Configuration Files
 
-**Variables**:
-- `project_name` (required): Name of the project
-- `domain_name` (required): Name of the domain (typically "readme_generator") - used as a cost allocation tag
-- `git_repository` (required): Git repository URL for resource tagging
-- `role_to_assume_arn` (optional): ARN of the IAM role to assume for deployment
-  - Default: `""` (empty string)
-  - When empty, uses default AWS credentials configured in the environment
+#### System Prompt (`code/readme_generator/system_prompt.txt`)
+Defines the AI agent's behavior, analysis guidelines, and README structure requirements. This file is loaded at runtime and combined with the README template.
 
-### System Prompt
+Key instructions include:
+- Agent role and constraints
+- Repository analysis methodology
+- README content requirements
+- **Organizational context awareness**: The prompt explicitly instructs the agent to treat organizational context as authoritative unless contradicted by the repository
+- Output behavior and feedback loop handling
 
-The AI behavior is controlled by `system_prompt.txt`, which defines:
+#### README Template (`code/readme_generator/readme_example.md`)
+Defines the expected structure and sections for generated README files.
+
+### Project Configuration
+
+**File**: `code/pyproject.toml`
+
+- **Package Name**: `readme_generator`
+- **Version**: 0.4.1
+- **Python Version**: ^3.13
+- **Entry Point**: `readme_generator` command mapped to `readme_generator.main:command_line_main`
+
+### Inference Profile Resolution
+
+The tool looks up the Bedrock inference profile using the pattern:
+```
+{project_name}_{domain_name}
+```
+Where:
+- `project_name`: Provided via `-p` CLI option
+- `domain_name`: Fixed to `readme_generator`
+
+Example: `-p poc` resolves to inference profile `poc_readme_generator`
+
+### A. Prompt Engineering and Context Management
+
+The README Generator constructs the AI agent's system prompt by combining multiple sources in the following order:
+
+#### 1. Base System Prompt (`system_prompt.txt`)
+
+The foundation of the agent's instructions, defining:
 - The agent's role as a senior software engineer and technical writer
-- Analysis guidelines (what to look for in repositories)
-- README structure requirements
-- Output behavior and constraints
-- Feedback loop handling for chat mode
+- Analysis methodology and constraints
+- Required README sections and structure
+- Output format and tone guidelines
+- Security constraints (e.g., respecting `.gitignore`, file access boundaries)
+- **Organizational context awareness**: Explicit instruction that "Organizational context is authoritative unless explicitly contradicted by the repository"
 
-### README Template
+#### 2. README Template (`readme_example.md`)
 
-The output format follows `readme_example.md`, ensuring consistent structure with sections:
-- Project Overview
-- Architecture/Design
-- Prerequisites
-- Installation/Setup
-- Usage
-- Infrastructure (if present)
-- Configuration
-- Project Structure
-- Limitations/Assumptions
+Appended to the system prompt to provide a structural template with:
+- Standard section headings and hierarchy
+- Table of contents format
+- Markdown conventions
 
-### Security Features
+#### 3. Organizational Context (Optional)
 
-- **Path Validation**: The `check_root_path()` function prevents the agent from accessing files outside the specified root path
-- **File Access**: Only read operations are allowed on the target project; write operations are restricted to README.md at the root
+Injected via `--additional-context-file-path`, this is where you can provide:
+- Company-wide technical conventions
+- Infrastructure and deployment standards
+- Naming conventions and tagging policies
+- Technology stack preferences
+- Compliance and security requirements
+- CI/CD platform and execution model
+- Cloud provider conventions and region preferences
+
+This ensures the AI agent interprets repositories through the lens of your organization's specific practices, producing documentation that aligns with internal standards.
+
+**Important**: The system prompt has been enhanced to better integrate organizational context. When organizational conventions materially affect how users build, deploy, or operate the project (e.g., CI/CD platform, Terraform execution model, environment selection), they are explicitly documented in the generated README.
+
+#### 4. User-Provided Context String (Optional)
+
+Finally, any additional context provided via `--additional-context-string` is appended:
+```python
+system_prompt += "\nFinally, the user gave you this sentence as additional context:" + user_string
+```
+
+#### Prompt Construction Flow
+
+```
+Final System Prompt = Base Instructions (with org context awareness)
+                    + README Template 
+                    + [Organizational Context File] 
+                    + [User Context String]
+```
+
+This layered approach allows for:
+- **Consistency**: Base prompt ensures standard behavior across all runs
+- **Organizational Alignment**: System prompt now explicitly prioritizes organizational context
+- **Customization**: Organizational context adapts the tool to your environment
+- **Flexibility**: User context string enables quick, one-off adjustments
+
+#### Best Practices for Context Files
+
+1. **Keep it factual**: Provide objective information about conventions, not preferences
+2. **Be specific**: Include concrete examples of naming patterns, resource structures, etc.
+3. **Document CI/CD and deployment**: Specify which platform is used (GitLab CI, GitHub Actions, etc.) and how environments are selected
+4. **Include infrastructure conventions**: Cloud provider, region, Terraform backend patterns, workspace usage
+5. **Update regularly**: Maintain the context file as organizational practices evolve
+6. **Version control**: Store organizational context files in a shared repository
+7. **Scope appropriately**: Separate general organizational context from project-specific details
 
 ## VIII. Project Structure
 
+```
+readme-generator/
+├── code/                           # Python application code
+│   ├── readme_generator/           # Main package
+│   │   ├── main.py                 # CLI entry point and agent orchestration
+│   │   ├── system_prompt.txt       # AI agent instructions
+│   │   └── readme_example.md       # README template structure
+│   ├── pyproject.toml              # Poetry configuration and dependencies
+│   └── poetry.lock                 # Locked dependency versions
+├── iac/                            # Infrastructure as Code (Terraform)
+│   ├── bedrock_inference_profile.tf # Bedrock inference profile resource
+│   ├── locals.tf                   # Local variables
+│   ├── variables.tf                # Input variables
+│   ├── data.tf                     # Data sources (AWS account, region)
+│   ├── terraform.tf                # Provider and backend configuration
+│   └── backend.hcl                 # Backend configuration (git-ignored)
+├── .gitlab-ci.yml                  # GitLab CI/CD pipeline
+├── .releaserc.json                 # Semantic release configuration
+├── .gitignore                      # Git ignore patterns
+└── LICENSE                         # MIT License
+```
+
 ### A. Application Code
 
-**`code/readme_generator/`**
-- `main.py`: Core application logic
-  - `get_tree()`: Tool for exploring directory structure with recursive traversal
-  - `read_file_as_string()`: Tool for reading file contents with path validation
-  - `write_readme_file()`: Tool for writing the generated README
-  - `get_inference_profile_arn()`: Retrieves the Bedrock inference profile by name
-  - `main()`: Orchestrates the agent workflow and chat loop
-  - `command_line_main()`: Click-based CLI entry point
+**`code/readme_generator/main.py`**
+- CLI entry point using Click framework
+- Agent initialization and orchestration
+- Custom tool definitions (`get_tree`, `write_readme_file`)
+- Security validation for file access
+- Chat mode implementation
+- Prompt construction logic (base + template + organizational context + user context)
 
-- `system_prompt.txt`: System prompt defining agent behavior and analysis guidelines
-- `readme_example.md`: Template structure for generated READMEs
+**`code/readme_generator/system_prompt.txt`**
+- Defines AI agent role and capabilities
+- Specifies analysis guidelines
+- Lists required README sections
+- Sets output format and tone
+- **Includes organizational context awareness directive**: "Organizational context is authoritative unless explicitly contradicted by the repository"
+- **Includes organizational context exposure guideline**: "When organizational conventions materially affect how users build, deploy, or operate the project, they MUST be explicitly documented in the README"
 
-**`code/pyproject.toml`**
-- Poetry configuration file defining:
-  - Project metadata (name: `readme_generator`, version: `0.2.0`)
-  - Python dependencies: boto3, click, strands-agents (v1.9.0), strands-agents-tools (v0.2.8), strands-agents-builder (v0.1.10)
-  - CLI script entry point (`readme_generator`)
+**`code/readme_generator/readme_example.md`**
+- Markdown template for generated READMEs
+- Defines standard section structure
 
 ### B. Infrastructure as Code
 
-**`iac/`**
-- `terraform.tf`: Provider configuration with default tags (Appli, Component, git_repository), S3 backend setup, and required providers
-- `bedrock_inference_profile.tf`: Bedrock inference profile resource definition
-- `variables.tf`: Input variables (project_name, domain_name, git_repository, role_to_assume_arn)
-- `locals.tf`: Local values computed from variables (environment_name)
-- `data.tf`: Data sources for AWS account ID and region
-- `terraform.tfvars`: Variable values (gitignored for security)
+**`iac/bedrock_inference_profile.tf`**
+- Defines AWS Bedrock inference profile resource
+- Configures Claude Sonnet 4.5 model
+
+**`iac/locals.tf`**
+- `domain_name`: Fixed to `readme_generator`
+- `environment_name`: Computed as `{project_name}_{domain_name}`
+
+**`iac/terraform.tf`**
+- AWS provider configuration with default tags
+- S3 backend configuration for state management
+- IAM role assumption support
 
 ## IX. Limitations / Assumptions
 
-### Application Limitations
+### Assumptions
 
-- **Region-Specific**: The Bedrock inference profile must be created in the same region where the application runs
-- **Model Availability**: Assumes Claude Sonnet 4.5 model is available and accessible in the AWS account
-- **Single README Output**: Only generates a README.md file at the project root (does not generate documentation for subdirectories)
-- **Path Constraints**: The agent can only analyze files within the specified root path
-- **No Offline Mode**: Requires active AWS credentials and internet connectivity
-- **Session Storage**: Uses file-based session management with UUID-based session IDs stored locally
+1. **AWS Region**: Infrastructure defaults to `eu-west-1` (Ireland)
+2. **Python Version**: Requires Python 3.13 or higher
+3. **Bedrock Access**: Assumes AWS account has access to Claude Sonnet 4.5 model in the deployment region
+4. **Terraform Backend**: Backend configuration must be provided at initialization time (not hardcoded)
+5. **GitLab CI/CD**: CI/CD pipelines are configured for GitLab (not GitHub Actions)
+6. **Inference Profile Naming**: The tool expects inference profiles to follow the naming pattern `{project_name}_readme_generator`
+7. **GitHub Mirror**: This repository is mirrored to GitHub from GitLab (source of truth is GitLab)
 
-### Infrastructure Assumptions
+### Limitations
 
-- **Pre-existing Backend**: Assumes S3 bucket `poc-terraform-backend-049810646332` and DynamoDB table `poc_terraform_backend` already exist in `eu-west-1`
-- **IAM Permissions**: The executing role/user must have permissions to:
-  - Create and manage Bedrock inference profiles
-  - List inference profiles
-  - Assume the role specified in `role_to_assume_arn` (if provided)
-- **Default Credentials Fallback**: When `role_to_assume_arn` is not provided, the system uses default AWS credentials from the environment
-- **Bedrock Model Access**: The AWS account must have been granted access to Claude Sonnet 4.5 model through the Bedrock console
-- **Cost Allocation Tags**: Assumes cost allocation tags are activated in AWS Billing and Cost Management console for cost tracking functionality
+1. **Path Restriction**: The agent can only access files within the specified root path (security measure)
+2. **Recursive Depth**: Directory exploration is limited to a configurable depth (default: 5 levels) to prevent performance issues
+3. **Model Dependency**: Requires access to AWS Bedrock and the specific Claude model
+4. **AWS Credentials**: Relies on locally configured AWS credentials (does not support credential injection)
+5. **Single Repository Analysis**: Designed to analyze one repository at a time
+6. **No Multi-language LLM Support**: Currently configured only for Claude on AWS Bedrock
+7. **GitIgnore Awareness**: The system prompt instructs the agent to respect `.gitignore`, but enforcement depends on AI behavior
 
-### Design Assumptions
+### Known Constraints
 
-- **Repository Structure**: Assumes standard repository layouts (e.g., presence of `pyproject.toml`, `requirements.txt`, `*.tf` files indicates purpose)
-- **Text-Based Files**: The tool is optimized for text-based source code and configuration files
-- **Token Budget**: Generated READMEs are constrained by the model's context window and output limits
-- **Tool Integration**: Uses Strands framework for agent orchestration with custom tools (file_read, get_tree, write_readme_file)
+- **Token Limits**: Large codebases may exceed Claude's context window
+- **Cost**: Each README generation incurs AWS Bedrock API costs
+- **Network Dependency**: Requires network access to AWS services
+- **Session Persistence**: Chat mode sessions are stored locally and not shared across machines
+- **Terraform Workspace**: Local users must manually create and select Terraform workspaces to control environment (`stage_name`); otherwise defaults to `default` workspace
