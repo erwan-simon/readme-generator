@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "readme_generator"
-version = "0.4.1"
+version = "0.5.0"
 description = ""
 authors = ["Erwan Simon <erwan.simon@devoteam.com>"]
 

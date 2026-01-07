@@ -77,9 +77,11 @@ def get_inference_profile_arn(logger, boto_session, inference_profile_name: str)
             if profile['inferenceProfileName'] == inference_profile_name:
                 inference_profile_arn = profile['inferenceProfileArn']
     if not inference_profile_arn:
-        error_message = f"Did not find any inference profile with name {inference_profile_name}."
-        logger.error(error_message)
-        raise ValueError(error_message)
+        aws_region = boto_session.region_name
+        account_id = boto_session.client("sts").get_caller_identity()["Account"]
+        default_inference_profile_arn = f"arn:aws:bedrock:{aws_region}:{account_id}:inference-profile/global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+        logger.error(f"Did not find any inference profile with name {inference_profile_name}, using default one: {default_inference_profile_arn}")
+        return default_inference_profile_arn
     print(f"Using {inference_profile_arn} as Bedrock inference profile")
     return inference_profile_arn
 
