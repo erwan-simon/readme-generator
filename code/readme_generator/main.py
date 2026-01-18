@@ -8,11 +8,12 @@ import click
 import boto3
 from datetime import datetime
 from strands import Agent, tool
+from strands.models import BedrockModel
 from strands.types.tools import ToolContext
 from strands.session.file_session_manager import FileSessionManager
 from strands.handlers.callback_handler import PrintingCallbackHandler
 from strands_tools import file_read
-
+from botocore.config import Config as BotocoreConfig
 
 def check_root_path(root_path: str, operation_path: str):
     root_path_object = Path(root_path)
@@ -114,7 +115,13 @@ def main(logger,
         system_prompt += "\nFinally, the user gave you this sentence as additional context:" + \
             additional_context_string
     agent = Agent(
-        model=inference_profile_arn,
+        model=BedrockModel(
+            model_id=inference_profile_arn,
+            boto_session=boto_session,
+            boto_client_config=BotocoreConfig(
+                read_timeout=180,  # seconds
+            )
+        ),
         system_prompt=system_prompt,
         session_manager=main_session_manager,
         callback_handler=None,
