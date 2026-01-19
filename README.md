@@ -15,10 +15,11 @@
 
 ## I. Project Overview
 
-README Generator is an AI-powered CLI tool that automatically generates comprehensive README.md files for codebases. The tool analyzes a project's repository structure and source code to produce well-structured, accurate documentation without requiring prior knowledge of the project.
+README Generator is an AI-powered CLI tool that automatically generates comprehensive README.md files for codebases. The tool analyzes a project's repository structure, source code, and Git history to produce well-structured, accurate documentation without requiring prior knowledge of the project.
 
 The tool is designed for developers and technical teams who want to:
 - Automatically generate standardized README files for their projects
+- Update existing documentation based on code changes (incremental update mode)
 - Ensure documentation accuracy by deriving information directly from code
 - Maintain consistent documentation structure across multiple repositories
 - Reduce manual documentation effort
@@ -31,6 +32,7 @@ The README Generator is built as a Python-based AI agent system with the followi
 
 1. **AI Agent (Strands Framework)**
    - Uses AWS Bedrock with Claude Sonnet 4.5 as the inference model
+   - Configured with extended read timeout (180 seconds) for large codebases
    - Equipped with custom tools for repository exploration and file manipulation
    - Maintains conversation state for interactive chat mode
 
@@ -39,11 +41,16 @@ The README Generator is built as a Python-based AI agent system with the followi
    - `write_readme_file`: Writes generated content to README.md at the project root
    - `file_read`: Reads and analyzes source files (provided by strands-agents-tools)
 
-3. **Security Layer**
+3. **Git Integration**
+   - Detects changes since the last README.md update using Git history
+   - Generates diff output to focus analysis on modified files
+   - Enables incremental documentation updates rather than full regeneration
+
+4. **Security Layer**
    - Path validation ensures the agent can only access files within the specified root directory
    - Prevents directory traversal attacks
 
-4. **Session Management**
+5. **Session Management**
    - File-based session persistence for conversation history
    - Enables interactive chat mode for iterative refinement
 
@@ -51,11 +58,21 @@ The README Generator is built as a Python-based AI agent system with the followi
 
 1. User invokes CLI with project path and project name
 2. Agent retrieves AWS Bedrock inference profile by name pattern (`{project_name}_{domain_name}`)
-3. System prompt is constructed from templates and optional organizational context
-4. Agent explores repository structure using `get_tree`
-5. Agent reads relevant files to understand the project
-6. Agent generates README.md based on analysis
-7. (Optional) User can enter chat mode to iteratively refine the documentation
+3. If named profile is not found, falls back to global Claude Sonnet 4.5 profile
+4. System prompt is constructed from templates and optional organizational context
+5. Git diff analysis identifies changes since last README update (if applicable)
+6. Agent explores repository structure using `get_tree`
+7. Agent reads relevant files to understand the project
+8. Agent generates or updates README.md based on analysis
+9. (Optional) User can enter chat mode to iteratively refine the documentation
+
+### Change-Based Update Mode
+
+The tool implements an intelligent incremental update strategy:
+- When a README.md already exists and the repository is a Git repository
+- The tool extracts the diff of all changes since the README was last modified
+- The AI agent focuses its analysis on changed files rather than re-analyzing the entire codebase
+- This improves performance and reduces API costs for large repositories
 
 ## III. Prerequisites
 
@@ -72,7 +89,7 @@ The executing user/role must have permissions to:
 - List AWS Bedrock inference profiles (`bedrock:ListInferenceProfiles`)
 
 ### Infrastructure Prerequisite
-Before using the tool, an AWS Bedrock inference profile must be deployed via Terraform (see Infrastructure section).
+Before using the tool, an AWS Bedrock inference profile must be deployed via Terraform (see Infrastructure section). If the named profile is not found, the tool will attempt to use a default global Claude Sonnet 4.5 profile.
 
 ## IV. Installation / Setup
 
@@ -224,8 +241,8 @@ The infrastructure is managed with Terraform and deploys an AWS Bedrock inferenc
 
 - **aws_bedrock_inference_profile.main**: Creates a Bedrock inference profile
   - Name pattern: `{project_name}_readme_generator`
-  - Model: Claude Sonnet 4.5 (`eu.anthropic.claude-sonnet-4-5-20250929-v1:0`)
-  - Region-specific model ARN is constructed dynamically
+  - Model: Claude Sonnet 4.5 (`global.anthropic.claude-sonnet-4-5-20250929-v1:0`)
+  - Uses global inference profile for cross-region availability
 
 ### Terraform Variables
 
@@ -318,8 +335,11 @@ Defines the AI agent's behavior, analysis guidelines, and README structure requi
 Key instructions include:
 - Agent role and constraints
 - Repository analysis methodology
+- **Change-based update mode**: Instructions for incremental updates based on Git diff
+- **Context window safety**: Adaptive exploration strategy to prevent token overflow
+- **Documentation neutrality rule**: Ensures README represents current state without mentioning changes or versions
 - README content requirements
-- **Organizational context awareness**: The prompt explicitly instructs the agent to treat organizational context as authoritative unless contradicted by the repository
+- Organizational context awareness
 - Output behavior and feedback loop handling
 
 #### README Template (`code/readme_generator/readme_example.md`)
@@ -330,7 +350,7 @@ Defines the expected structure and sections for generated README files.
 **File**: `code/pyproject.toml`
 
 - **Package Name**: `readme_generator`
-- **Version**: 0.4.1
+- **Version**: 0.5.1
 - **Python Version**: ^3.13
 - **Entry Point**: `readme_generator` command mapped to `readme_generator.main:command_line_main`
 
@@ -346,6 +366,18 @@ Where:
 
 Example: `-p poc` resolves to inference profile `poc_readme_generator`
 
+If the named profile is not found, the tool falls back to:
+```
+arn:aws:bedrock:{region}:{account}:inference-profile/global.anthropic.claude-sonnet-4-5-20250929-v1:0
+```
+
+### Bedrock Configuration
+
+The Bedrock client is configured with:
+- **Read Timeout**: 180 seconds (to accommodate large repository analysis)
+- **Model**: Claude Sonnet 4.5 via inference profile
+- **Session Management**: File-based persistence for conversation history
+
 ### A. Prompt Engineering and Context Management
 
 The README Generator constructs the AI agent's system prompt by combining multiple sources in the following order:
@@ -359,6 +391,9 @@ The foundation of the agent's instructions, defining:
 - Output format and tone guidelines
 - Security constraints (e.g., respecting `.gitignore`, file access boundaries)
 - **Organizational context awareness**: Explicit instruction that "Organizational context is authoritative unless explicitly contradicted by the repository"
+- **Change-based update mode**: Instructions for using Git diff to focus on modified files
+- **Documentation neutrality rule**: Prohibition of version references or "new/added/removed" language
+- **Context window safety**: Adaptive directory-by-directory exploration strategy
 
 #### 2. README Template (`readme_example.md`)
 
@@ -380,14 +415,21 @@ Injected via `--additional-context-file-path`, this is where you can provide:
 
 This ensures the AI agent interprets repositories through the lens of your organization's specific practices, producing documentation that aligns with internal standards.
 
-**Important**: The system prompt has been enhanced to better integrate organizational context. When organizational conventions materially affect how users build, deploy, or operate the project (e.g., CI/CD platform, Terraform execution model, environment selection), they are explicitly documented in the generated README.
-
 #### 4. User-Provided Context String (Optional)
 
-Finally, any additional context provided via `--additional-context-string` is appended:
+Any additional context provided via `--additional-context-string` is appended:
 ```python
 system_prompt += "\nFinally, the user gave you this sentence as additional context:" + user_string
 ```
+
+#### 5. Git Diff List (Automatic)
+
+If the repository is a Git repository and a README.md exists, the tool automatically appends:
+```python
+system_prompt += "\n\nHere is the diff list:\n" + str(changes_list)
+```
+
+This enables the agent to focus on changed files and perform incremental updates.
 
 #### Prompt Construction Flow
 
@@ -396,13 +438,15 @@ Final System Prompt = Base Instructions (with org context awareness)
                     + README Template 
                     + [Organizational Context File] 
                     + [User Context String]
+                    + [Git Diff Since Last README Update]
 ```
 
 This layered approach allows for:
 - **Consistency**: Base prompt ensures standard behavior across all runs
-- **Organizational Alignment**: System prompt now explicitly prioritizes organizational context
+- **Organizational Alignment**: System prompt explicitly prioritizes organizational context
 - **Customization**: Organizational context adapts the tool to your environment
 - **Flexibility**: User context string enables quick, one-off adjustments
+- **Efficiency**: Git diff enables incremental updates for large repositories
 
 #### Best Practices for Context Files
 
@@ -446,7 +490,10 @@ readme-generator/
 - Custom tool definitions (`get_tree`, `write_readme_file`)
 - Security validation for file access
 - Chat mode implementation
-- Prompt construction logic (base + template + organizational context + user context)
+- Prompt construction logic (base + template + organizational context + user context + git diff)
+- Git integration for change detection (`get_git_diff_since_readme_update`)
+- Bedrock client configuration with extended read timeout (180 seconds)
+- Inference profile resolution with fallback to global profile
 
 **`code/readme_generator/system_prompt.txt`**
 - Defines AI agent role and capabilities
@@ -455,6 +502,9 @@ readme-generator/
 - Sets output format and tone
 - **Includes organizational context awareness directive**: "Organizational context is authoritative unless explicitly contradicted by the repository"
 - **Includes organizational context exposure guideline**: "When organizational conventions materially affect how users build, deploy, or operate the project, they MUST be explicitly documented in the README"
+- **Defines change-based update mode**: Instructions for using Git diff to focus analysis
+- **Defines documentation neutrality rule**: Prohibition of version/change references
+- **Defines context window safety strategy**: Adaptive directory-by-directory exploration
 
 **`code/readme_generator/readme_example.md`**
 - Markdown template for generated READMEs
@@ -465,6 +515,7 @@ readme-generator/
 **`iac/bedrock_inference_profile.tf`**
 - Defines AWS Bedrock inference profile resource
 - Configures Claude Sonnet 4.5 model
+- Uses global inference profile for cross-region support
 
 **`iac/locals.tf`**
 - `domain_name`: Fixed to `readme_generator`
@@ -481,11 +532,12 @@ readme-generator/
 
 1. **AWS Region**: Infrastructure defaults to `eu-west-1` (Ireland)
 2. **Python Version**: Requires Python 3.13 or higher
-3. **Bedrock Access**: Assumes AWS account has access to Claude Sonnet 4.5 model in the deployment region
+3. **Bedrock Access**: Assumes AWS account has access to Claude Sonnet 4.5 model
 4. **Terraform Backend**: Backend configuration must be provided at initialization time (not hardcoded)
 5. **GitLab CI/CD**: CI/CD pipelines are configured for GitLab (not GitHub Actions)
 6. **Inference Profile Naming**: The tool expects inference profiles to follow the naming pattern `{project_name}_readme_generator`
 7. **GitHub Mirror**: This repository is mirrored to GitHub from GitLab (source of truth is GitLab)
+8. **Git Repository**: Change-based update mode requires the project to be a Git repository
 
 ### Limitations
 
@@ -496,11 +548,14 @@ readme-generator/
 5. **Single Repository Analysis**: Designed to analyze one repository at a time
 6. **No Multi-language LLM Support**: Currently configured only for Claude on AWS Bedrock
 7. **GitIgnore Awareness**: The system prompt instructs the agent to respect `.gitignore`, but enforcement depends on AI behavior
+8. **Read Timeout**: Bedrock API calls are subject to 180-second timeout, which may affect very large repositories
 
 ### Known Constraints
 
-- **Token Limits**: Large codebases may exceed Claude's context window
+- **Token Limits**: Large codebases may exceed Claude's context window; the tool implements adaptive exploration to mitigate this
 - **Cost**: Each README generation incurs AWS Bedrock API costs
 - **Network Dependency**: Requires network access to AWS services
 - **Session Persistence**: Chat mode sessions are stored locally and not shared across machines
 - **Terraform Workspace**: Local users must manually create and select Terraform workspaces to control environment (`stage_name`); otherwise defaults to `default` workspace
+- **Git Diff Analysis**: Change-based update mode is only available for Git repositories with existing README.md files
+- **Inference Profile Fallback**: If the named inference profile is not found, the tool uses a global profile ARN which may have different rate limits or availability

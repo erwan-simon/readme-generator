@@ -14,6 +14,7 @@ from strands.session.file_session_manager import FileSessionManager
 from strands.handlers.callback_handler import PrintingCallbackHandler
 from strands_tools import file_read
 from botocore.config import Config as BotocoreConfig
+from git import Repo
 
 def check_root_path(root_path: str, operation_path: str):
     root_path_object = Path(root_path)
@@ -87,6 +88,31 @@ def get_inference_profile_arn(logger, boto_session, inference_profile_name: str)
     return inference_profile_arn
 
 
+def get_git_diff_since_readme_update(root_path: str) -> list:
+    """
+    Allow to tell to the LLM which files changed since the README was modified
+    """
+    try:
+        repo = Repo(root_path)
+    except git.exc.InvalidGitRepositoryError:
+        return "This project is not a git repo."
+    commits = repo.iter_commits(
+        paths=str(Path(root_path) / "README.md"), max_count=1)
+    commit = next(commits, None)
+    commit_hash_of_last_readme_update = commit.hexsha if commit else None
+    if not commit_hash_of_last_readme_update:
+        return "No git history was found."
+    if repo.commit().hexsha == commit_hash_of_last_readme_update:
+        return "The README seems updated with the git history."
+    return [
+        f"--- a/{diff_item.a_blob.name}\n+++ b/{diff_item.b_blob.name}\n" + \
+        f"{diff_item.diff.decode('utf-8')}\n\n"
+        for diff_item in repo.commit(
+            commit_hash_of_last_readme_update
+        ).diff(repo.commit("HEAD"), create_patch=True)
+    ]
+
+
 def main(logger,
          boto_session,
          project_name: str,
@@ -114,6 +140,9 @@ def main(logger,
     if additional_context_string:
         system_prompt += "\nFinally, the user gave you this sentence as additional context:" + \
             additional_context_string
+    changes_list = get_git_diff_since_readme_update(root_path)
+    system_prompt += "\n\nHere is the diff list:\n" + \
+        str(changes_list)
     agent = Agent(
         model=BedrockModel(
             model_id=inference_profile_arn,
