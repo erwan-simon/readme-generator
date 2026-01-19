@@ -93,24 +93,27 @@ def get_git_diff_since_readme_update(root_path: str) -> list:
     Allow to tell to the LLM which files changed since the README was modified
     """
     try:
-        repo = Repo(root_path)
-    except git.exc.InvalidGitRepositoryError:
-        return "This project is not a git repo."
-    commits = repo.iter_commits(
-        paths=str(Path(root_path) / "README.md"), max_count=1)
-    commit = next(commits, None)
-    commit_hash_of_last_readme_update = commit.hexsha if commit else None
-    if not commit_hash_of_last_readme_update:
-        return "No git history was found."
-    if repo.commit().hexsha == commit_hash_of_last_readme_update:
-        return "The README seems updated with the git history."
-    return [
-        f"--- a/{diff_item.a_blob.name}\n+++ b/{diff_item.b_blob.name}\n" + \
-        f"{diff_item.diff.decode('utf-8')}\n\n"
-        for diff_item in repo.commit(
-            commit_hash_of_last_readme_update
-        ).diff(repo.commit("HEAD"), create_patch=True)
-    ]
+        try:
+            repo = Repo(root_path)
+        except git.exc.InvalidGitRepositoryError:
+            return "This project is not a git repo."
+        commits = repo.iter_commits(
+            paths=str(Path(root_path) / "README.md"), max_count=1)
+        commit = next(commits, None)
+        commit_hash_of_last_readme_update = commit.hexsha if commit else None
+        if not commit_hash_of_last_readme_update:
+            return "No git history was found."
+        if repo.commit().hexsha == commit_hash_of_last_readme_update:
+            return "The README seems updated with the git history."
+        return [
+            f"--- a/{diff_item.a_blob.name}\n+++ b/{diff_item.b_blob.name}\n" + \
+            f"{diff_item.diff.decode('utf-8')}\n\n"
+            for diff_item in repo.commit(
+                commit_hash_of_last_readme_update
+            ).diff(repo.commit("HEAD"), create_patch=True)
+        ]
+    except Exception:
+        return "The git diff retrieval failed."
 
 
 def main(logger,
