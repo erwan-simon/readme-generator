@@ -1,5 +1,7 @@
 # README Generator
 
+> **⚠️ Project archived.** This project is archived as it has become entirely redundant given the performance of Claude Code, which natively handles this use case.
+
 * [I. Project Overview](#i-project-overview)
 * [II. Architecture / Design](#ii-architecture--design)
 * [III. Prerequisites](#iii-prerequisites)
